@@ -4,6 +4,7 @@ library(rpart)
 library(tidyverse)
 library(rpart.plot)
 library(arules)
+library(arulesViz)
 options("digits"=4)
 
 cardioARulesDf <- read.csv('cardio_train.csv', header = T, sep = ';')
@@ -50,6 +51,9 @@ length(which(cardioARulesDf$ ap_lo  > 140))
 cardioARulesDf <- cardioARulesDf[-which(cardioARulesDf$ ap_lo  < 50),]
 cardioARulesDf <- cardioARulesDf[-which(cardioARulesDf$ ap_lo  > 140),]
 
+## Remove id
+cardioARulesDf <- cardioARulesDf[ , !(names(cardioARulesDf) %in% c("id"))]
+
 ## Convert to factors
 cardioARulesDf$gender <- factor(cardioARulesDf$gender,
                           levels = c(1,2),
@@ -91,8 +95,7 @@ cardioARulesDf$ap_hi <- discretize(cardioARulesDf$ap_hi, method = "fixed", break
            labels = c("normal", "elevated", "high1", "high2", "hypertesive"))
 cardioARulesDf$ap_lo <- discretize(cardioARulesDf$ap_lo, method = "fixed", breaks = c(-Inf, 80, 90,120, Inf), 
                                    labels = c("normal", "high1", "high2", "hypertesive"))
-## Remove id
-cardioARulesDf <- cardioARulesDf[ , !(names(cardioARulesDf) %in% c("id"))]
+
 
 str(cardioARulesDf)
 
@@ -106,6 +109,7 @@ cardioPositiveRules <- apriori(data = cardioARulesDf, parameter = list(supp = 0.
                  control = list(verbose = F))
 cardioPositiveRules<-sort(cardioPositiveRules, decreasing=TRUE,by='confidence')
 inspect(head(sort(cardioPositiveRules, by = "lift", decreasing = T), 10))
+plot(cardioPositiveRules, measure = c("support", "lift"), shading = "confidence")
 
 ## Negative prediction rules
 cardioNegativeRules <- apriori(data = cardioARulesDf, parameter = list(supp = 0.1, conf = 0.5, minlen =7),
@@ -113,3 +117,4 @@ cardioNegativeRules <- apriori(data = cardioARulesDf, parameter = list(supp = 0.
                                control = list(verbose = F))
 cardioNegativeRules<-sort(cardioNegativeRules, decreasing=TRUE,by='confidence')
 inspect(head(sort(cardioNegativeRules, by = "lift", decreasing = T), 10))
+plot(cardioNegativeRules, measure = c("support", "lift"), shading = "confidence")
