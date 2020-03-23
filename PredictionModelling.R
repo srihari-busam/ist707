@@ -5,6 +5,10 @@ library(tidyverse)
 library(rpart.plot)
 library(arules)
 library(arulesViz)
+library(rattle)
+library(gridExtra)
+library(stargazer)
+
 
 cardio_svm_df <- read.csv('cardio_train.csv', header = T, sep = ';')
 str(cardio_svm_df)
@@ -55,6 +59,7 @@ cardio_svm_df <- cardio_svm_df[ , !(names(cardio_svm_df) %in% c("id"))]
 
 str(cardio_svm_df)
 head(cardio_svm_df)
+70000 -nrow(cardio_svm_df)
 
 #######################################################################################################################################
 #######################################################################################################################################
@@ -67,28 +72,33 @@ train_df <- cardio_svm_df[train_index,]
 test_df <- cardio_svm_df[-train_index,]
 nrow(train_df)
 nrow(test_df)
+nrow(train_df)
+nrow(test_df)
 
-## SVM Modelling
+## Random forest
+set.seed(123)
+start_time <- Sys.time()
+cardio_model_rf <- train(cardio ~ ., data = train_df,
+                         method = "rf",
+                         metric = "F1",
+                         trControl = trainControl(method = "repeatedcv", number = 15, repeats = 3, allowParallel = T))
+end_time <- Sys.time()
+end_time - start_time
+
+## SVM Linear
 # https://medium.com/@alon.lek/should-i-look-at-precision-recall-or-specificity-sensitivity-3946158aace1
 set.seed(123)
 start_time <- Sys.time()
 cardio_svm_linear <- train(cardio ~ ., data = train_df,
                                     method = "svmLinear",
-                                    metric = "Recall",
                                     preProcess = c("center", "scale"),
                                     trControl = trainControl(method = "repeatedcv", number = 15, repeats = 3, allowParallel = T),
-                                    tuneGrid = expand.grid(C = seq(0.1, 3.0, 0.2)))
+                                    tuneGrid = expand.grid(C = seq(0.1, 3.0, 0.5)))
 end_time <- Sys.time()
 end_time - start_time
 
-# run on test data and calcualte metrics 
-cardio_svm_linear_pred <- predict(cardio_svm_linear, newdata = train_df)
-model_sentiment_svm_linear_pred_matrix <- confusionMatrix(cardio_svm_linear_pred, train_df$cardio)
 
-# Get Accuracy, precision and Recall metrics
-model_sentiment_svm_linear_pred_matrix$byClass
-
-
+## SVM Radial
 set.seed(123)
 start_time <- Sys.time()
 cardio_svm_radial <- train(cardio ~ ., data = train_df,
@@ -102,20 +112,12 @@ end_time <- Sys.time()
 end_time - start_time
 varImp(cardio_svm_radial, scale=FALSE)
 
-set.seed(123)
-start_time <- Sys.time()
-cardio_model_rf <- train(cardio ~ ., data = train_df,
-                         method = "rf",
-                         metric = "F1",
-                         preProcess = c("center", "scale"),
-                         trControl = trainControl(method = "repeatedcv", number = 15, repeats = 3, allowParallel = T))
-end_time <- Sys.time()
-end_time - start_time
 
+## KNN
 set.seed(123)
 start_time <- Sys.time()
 model_knn <- train(cardio ~ ., data = train_df, method = "knn",
-                   tuneGrid = data.frame(k = seq(20, 40)),
+                   tuneGrid = data.frame(k = seq(1, 25)),
                    preProcess = c("center", "scale"),
                    trControl = trainControl(method = "repeatedcv", 
                                             number = 15, repeats = 3, allowParallel = T))
@@ -123,6 +125,7 @@ end_time <- Sys.time()
 end_time - start_time
 varImp(model_knn, scale=FALSE)
 
+## RPART
 start_time <- Sys.time()
 model_rpart <- train(cardio ~ ., data = train_df, method = "rpart",
                            trControl = trainControl(method = "repeatedcv", number = 15, repeats = 3, allowParallel = T),
@@ -130,18 +133,87 @@ model_rpart <- train(cardio ~ ., data = train_df, method = "rpart",
                         )
 end_time <- Sys.time()
 end_time - start_time
-varImp(model_rpart, scale=FALSE)
-
-model_rpart_direct <- rpart(cardio ~ ., data = train_df, method = "class",  parms = list(split = "gini"), control  = rpart.control(minsplit = 10, minbucket = 5, cp = -1, xval=3))
-model_rpart_direct_pred <- predict(model_rpart_direct, newdata = test_df, type = "class")
-model_sentiment_svm_linear_pred_matrix <- confusionMatrix(model_rpart_direct_pred, test_df$cardio)
 
 
 ### NB
 start_time <- Sys.time()
 model_nb <- train(cardio ~ ., data = train_df, method = "nb",
                           preProcess = c("center", "scale"),
-                          trControl = trainControl(method = "repeatedcv", number = 15,repeats=2, allowParallel = T),
+                          trControl = trainControl(method = "repeatedcv", number = 15,repeats=3, allowParallel = T),
                           tuneGrid = expand.grid(fL = 1:2, usekernel = c(TRUE, FALSE), adjust = 1:2))
 end_time <- Sys.time()
 end_time - start_time
+
+## Model comparision
+model_comparison <- resamples(list(DecisionTree = model_rpart,
+                                   RandomForest = cardio_model_rf, 
+                                   NaiveBayes = model_nb, 
+                                   KNN = model_knn, 
+                                   SVMLinear = cardio_svm_linear), metric = "Recall")
+scales <- list(x = list(relation = "free"),
+               y = list(relation = "free"))
+
+bwplot(model_comparison, scales = scales, main="Classification modelling comparision")
+
+
+## Aux functiona final reports
+modelAnalysis <- function(model, varImpTitle){
+  
+  print(model$bestTune)
+  print(knitr::kable(model$results, digits = 2, caption = "TEST."))
+  print(model$finalModel)
+  
+  pred_value <- predict(model, newdata = test_df)
+  conf_matrix <- confusionMatrix(pred_value, test_df$cardio)
+  print(conf_matrix$table)
+  print(conf_matrix$byClass)
+  
+  plot(varImp(model), main = varImpTitle)
+  
+}
+
+## DT
+modelAnalysis(model_rpart, "Variable Importance with Decision Tree")
+fancyRpartPlot(model_rpart$finalModel, main = "Decision Tree")
+
+## KNN
+modelAnalysis(model_knn, "Variable Importance with KNN")
+knitr::kable(model_knn$results, digits = 2, caption = "TEST.")
+plot(model_knn, main="KNN Accuracy with neighbours")
+
+## NB
+modelAnalysis(model_nb, "Variable Importance with Naive Bayes")
+knitr::kable(model_nb$results, digits = 2, caption = "TEST.")
+plot(model_nb, main="Naive Bayes accuracy")
+model_nb$finalModel
+
+## SVM LINEAR
+modelAnalysis(cardio_svm_linear, "Variable Importance with SVM-Linear")
+knitr::kable(cardio_svm_linear$results, digits = 2, caption = "TEST.")
+plot(cardio_svm_linear, main="SVM-Linear accuracy")
+cardio_svm_linear$finalModel
+
+## SVM RAIDAL
+
+modelAnalysis(cardio_svm_radial, "Variable Importance with SVM-Radial")
+knitr::kable(cardio_svm_radial$results, digits = 2, caption = "TEST.")
+plot(cardio_svm_radial, main="SVM-Radial accuracy")
+cardio_svm_radial$finalModel
+
+
+model_rpart$bestTune
+model_rpart$results
+model_rpart$finalModel
+
+pred_value <- predict(model_rpart, newdata = test_df)
+conf_matrix <- confusionMatrix(pred_value, test_df$cardio)
+conf_matrix$table
+conf_matrix$byClass
+
+print(conf_matrix)
+plot(varImp(model), main = varImpTitle)
+
+options("digits"=4)
+grid.table(model_rpart$results)
+knitr::kable(model_rpart$results, digits = 2, caption = "TEST.")
+print.data.frame(model_rpart$results, digits =2)
